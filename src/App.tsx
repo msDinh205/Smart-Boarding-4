@@ -255,9 +255,58 @@ export default function App() {
     }
   };
 
+  const [showKeyModal, setShowKeyModal] = useState(!localStorage.getItem('gemini_api_key'));
+  const [tempKey, setTempKey] = useState('');
+
+  const saveKey = () => {
+    if (tempKey.trim()) {
+      localStorage.setItem('gemini_api_key', tempKey);
+      setShowKeyModal(false);
+      window.location.reload();
+    }
+  };
+
   return (
     <div className="min-h-screen flex flex-col font-sans bg-slate-50/50">
       <Header user={user} loginWithGoogle={loginWithGoogle} logout={logout} />
+      
+      {showKeyModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-primary/80 backdrop-blur-sm">
+          <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden">
+            <div className="p-10 space-y-8">
+              <div className="text-center space-y-2">
+                <h2 className="text-xl font-black text-primary uppercase tracking-widest">Cần thiết lập API</h2>
+                <p className="text-xs text-primary/40 leading-relaxed font-bold uppercase tracking-tight">
+                  Vui lòng nhập <span className="text-red-500">Gemini API Key</span> để kích hoạt tính năng phân tích nề nếp tự động.
+                </p>
+              </div>
+              <div className="space-y-4">
+                <input 
+                  type="password"
+                  value={tempKey}
+                  onChange={(e) => setTempKey(e.target.value)}
+                  placeholder="Nhập API Key của bạn..."
+                  className="w-full bg-slate-50 border-none rounded-2xl py-4 px-6 text-xs font-bold text-primary focus:ring-2 focus:ring-primary/10 transition-all text-center"
+                />
+                <a 
+                  href="https://aistudio.google.com/api-keys" 
+                  target="_blank" 
+                  rel="noreferrer"
+                  className="block text-center text-[10px] font-black text-accent uppercase tracking-widest hover:underline"
+                >
+                  Lấy key tại Google AI Studio
+                </a>
+              </div>
+              <button 
+                onClick={saveKey}
+                className="w-full py-4 bg-primary text-white rounded-2xl font-black text-xs uppercase tracking-[0.2em] shadow-xl shadow-primary/20 hover:scale-[1.02] active:scale-[0.98] transition-all"
+              >
+                Kích hoạt ứng dụng
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="bg-white border-b border-primary/5 sticky top-0 z-40">
         <div className="max-w-5xl mx-auto px-6 flex items-center gap-8">
