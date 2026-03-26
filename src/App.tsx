@@ -214,9 +214,9 @@ export default function App() {
         manualNotes
       );
       setResult(data);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Analysis failed:", error);
-      alert("Có lỗi xảy ra trong quá trình phân tích.");
+      alert(`Lỗi phân tích: ${error.message || "Không rõ nguyên nhân"}`);
     } finally {
       setLoading(false);
     }

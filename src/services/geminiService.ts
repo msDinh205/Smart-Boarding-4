@@ -3,8 +3,8 @@ import { AnalysisResult } from "../types";
 
 // Configuration from AI_INSTRUCTIONS.md
 const MODELS = [
-  { id: "gemini-3-flash-preview", real: "gemini-2.0-flash-exp" }, 
   { id: "gemini-3-pro-preview", real: "gemini-1.5-pro" },
+  { id: "gemini-3-flash-preview", real: "gemini-2.0-flash" }, 
   { id: "gemini-2.5-flash", real: "gemini-1.5-flash" }
 ];
 
@@ -124,5 +124,5 @@ Yêu cầu output JSON chính xác. Luôn trả về điểm số ở dạng s�
     }
   }
 
-  throw new Error(`Tất cả các model đều thất bại. Lỗi cuối cùng: ${lastError?.message || "Unknown error"}`);
+  throw new Error(`Phân tích thất bại sau khi thử tất cả các model. Lỗi cuối cùng: ${lastError?.message || "Không xác định"}. Vui lòng kiểm tra lại API Key hoặc hạn mức (quota) của bạn.`);
 }
