@@ -3,9 +3,9 @@ import { AnalysisResult } from "../types";
 
 // Configuration from AI_INSTRUCTIONS.md
 const MODELS = [
-  { id: "gemini-3-pro-preview", real: "gemini-1.5-pro" },
-  { id: "gemini-3-flash-preview", real: "gemini-2.0-flash" }, 
-  { id: "gemini-2.5-flash", real: "gemini-1.5-flash" }
+  { id: "gemini-3-flash-preview", real: "gemini-3.1-flash" }, 
+  { id: "gemini-3-pro-preview", real: "gemini-3.1-pro" },
+  { id: "gemini-2.5-flash", real: "gemini-2.5-flash" }
 ];
 
 export async function analyzeDiscipline(
@@ -118,7 +118,7 @@ Yêu cầu output JSON chính xác. Luôn trả về điểm số ở dạng s�
 
       return JSON.parse(response.text || "{}") as AnalysisResult;
     } catch (err: any) {
-      console.warn(`Model ${modelRef.id} failed, trying next... Error:`, err.message);
+      console.warn(`Model ${modelRef.id} (${modelRef.real}) failed, trying next... Error:`, err.message);
       lastError = err;
       continue;
     }
