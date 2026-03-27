@@ -1,7 +1,5 @@
 {
   "name": "Smart Boarding 4.0: Giải pháp Số hóa Nề nếp và Học tập",
-  "description": "Hệ thống hỗ trợ giáo viên chấm điểm thi đua và quản lý nền nếp học sinh nội trú vùng cao bằng AI.",
-  "requestFramePermissions": [
-    "camera"
-  ]
+  "description": "Ứng dụng quản lý và tính điểm thi đua tuần cho trường phổ thông dân tộc nội trú.",
+  "requestFramePermissions": []
 }
