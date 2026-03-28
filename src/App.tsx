@@ -16,12 +16,17 @@ import {
   MessageSquare,
   Sparkles,
   RefreshCw,
-  Download
+  Download,
+  Camera
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { GoogleGenAI } from "@google/genai";
 import ReactMarkdown from 'react-markdown';
+import { toJpeg } from 'html-to-image';
+import { jsPDF } from 'jspdf';
 import { cn } from './lib/utils';
+import { db } from './firebase';
+import { getDocFromServer, doc } from 'firebase/firestore';
 import { 
   WeeklyData, 
   DailyRecord, 
@@ -82,6 +87,48 @@ const calculateResultsForData = (data: WeeklyData) => {
 };
 
 export default function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [apiKeyInput, setApiKeyInput] = useState('');
+  const [isAuthReady, setIsAuthReady] = useState(false);
+
+  useEffect(() => {
+    const savedKey = localStorage.getItem('app_api_key');
+    if (savedKey === 'admin123') {
+      setIsAuthenticated(true);
+    }
+    setIsAuthReady(true);
+  }, []);
+
+  useEffect(() => {
+    async function testConnection() {
+      if (!isAuthReady || !isAuthenticated) return;
+      try {
+        await getDocFromServer(doc(db, 'test', 'connection'));
+      } catch (error) {
+        if(error instanceof Error && error.message.includes('the client is offline')) {
+          console.error("Please check your Firebase configuration.");
+        }
+      }
+    }
+    testConnection();
+  }, [isAuthReady, isAuthenticated]);
+
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (apiKeyInput === 'admin123') {
+      setIsAuthenticated(true);
+      localStorage.setItem('app_api_key', 'admin123');
+    } else {
+      alert('Mã API Key không hợp lệ!');
+    }
+  };
+
+  const handleLogout = () => {
+    setIsAuthenticated(false);
+    setApiKeyInput('');
+    localStorage.removeItem('app_api_key');
+  };
+
   const [appData, setAppData] = useState<Record<ClassName, Record<number, WeeklyData>>>(() => {
     const saved = localStorage.getItem('emulationAppData');
     if (saved) {
@@ -104,6 +151,45 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'input' | 'result'>('input');
   const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
   const [showMarkdown, setShowMarkdown] = useState(false);
+  const [analyzingImageDay, setAnalyzingImageDay] = useState<number | null>(null);
+  const [pendingAiData, setPendingAiData] = useState<WeeklyData | null>(null);
+  const [pendingImageAnalysis, setPendingImageAnalysis] = useState<{ dayIndex: number, text: string } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const contentRef = useRef<HTMLDivElement>(null);
+  const handlePrint = async () => {
+    if (!contentRef.current) return;
+    
+    const element = contentRef.current;
+    const buttons = element.querySelectorAll('.print\\:hidden');
+    buttons.forEach((btn) => (btn as HTMLElement).style.display = 'none');
+
+    try {
+      const dataUrl = await toJpeg(element, { 
+        quality: 0.95, 
+        backgroundColor: '#E4E3E0',
+        pixelRatio: 2
+      });
+      
+      const pdf = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: 'a4'
+      });
+
+      const imgProps = pdf.getImageProperties(dataUrl);
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+      
+      pdf.addImage(dataUrl, 'JPEG', 0, 0, pdfWidth, pdfHeight);
+      pdf.save(`Bao_cao_noi_tru_Tuan_${selectedWeek}_Lop_${selectedClass}.pdf`);
+    } catch (error) {
+      console.error('Lỗi khi tạo PDF:', error);
+      alert('Có lỗi xảy ra khi tạo file PDF.');
+    } finally {
+      buttons.forEach((btn) => (btn as HTMLElement).style.display = '');
+    }
+  };
 
   useEffect(() => {
     const classData = appDataRef.current[selectedClass] || {};
@@ -245,19 +331,31 @@ export default function App() {
       });
 
       const result = JSON.parse(response.text);
-      setData(prev => ({
-        ...prev,
+      const parsedData = {
+        ...data,
         ...result,
         dailyRecords: result.dailyRecords.map((r: any) => ({ ...r, baseScore: 10 }))
-      }));
-      setActiveTab('result');
-      generateAiAnalysis(result);
+      };
+      setPendingAiData(parsedData);
     } catch (error) {
       console.error("Error processing data:", error);
       alert("Có lỗi xảy ra khi xử lý dữ liệu. Vui lòng kiểm tra lại văn bản.");
     } finally {
       setIsProcessing(false);
     }
+  };
+
+  const confirmAiData = () => {
+    if (pendingAiData) {
+      setData(pendingAiData);
+      setPendingAiData(null);
+      setActiveTab('result');
+      generateAiAnalysis(pendingAiData);
+    }
+  };
+
+  const cancelAiData = () => {
+    setPendingAiData(null);
   };
 
   const generateAiAnalysis = async (currentData: WeeklyData) => {
@@ -299,6 +397,129 @@ export default function App() {
     (newData.dailyRecords[dayIndex].violations[vIndex] as any)[field] = value;
     setData(newData);
   };
+
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || analyzingImageDay === null) return;
+
+    try {
+      // Nén ảnh trước khi gửi để tăng tốc độ phân tích
+      const compressImage = (file: File): Promise<string> => {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.readAsDataURL(file);
+          reader.onload = (event) => {
+            const img = new Image();
+            img.src = event.target?.result as string;
+            img.onload = () => {
+              const canvas = document.createElement('canvas');
+              const MAX_WIDTH = 1024;
+              const MAX_HEIGHT = 1024;
+              let width = img.width;
+              let height = img.height;
+
+              if (width > height) {
+                if (width > MAX_WIDTH) {
+                  height *= MAX_WIDTH / width;
+                  width = MAX_WIDTH;
+                }
+              } else {
+                if (height > MAX_HEIGHT) {
+                  width *= MAX_HEIGHT / height;
+                  height = MAX_HEIGHT;
+                }
+              }
+              canvas.width = width;
+              canvas.height = height;
+              const ctx = canvas.getContext('2d');
+              ctx?.drawImage(img, 0, 0, width, height);
+              resolve(canvas.toDataURL('image/jpeg', 0.7)); // Nén thành JPEG chất lượng 70%
+            };
+            img.onerror = (error) => reject(error);
+          };
+          reader.onerror = (error) => reject(error);
+        });
+      };
+
+      const base64Data = await compressImage(file);
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: {
+          parts: [
+            {
+              inlineData: {
+                mimeType: 'image/jpeg',
+                data: base64Data.split(',')[1]
+              }
+            },
+            {
+              text: "Bạn là giám thị kiểm tra phòng nội trú. Hãy phân tích bức ảnh này và liệt kê các lỗi vi phạm nề nếp (ví dụ: chăn màn chưa gấp, rác trên sàn, đồ đạc lộn xộn, v.v.). Trả lời ngắn gọn bằng tiếng Việt."
+            }
+          ]
+        }
+      });
+      
+      setPendingImageAnalysis({ dayIndex: analyzingImageDay, text: response.text });
+    } catch (error) {
+      console.error("Lỗi phân tích ảnh:", error);
+      alert("Có lỗi xảy ra khi phân tích ảnh.");
+    } finally {
+      setAnalyzingImageDay(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const confirmImageAnalysis = () => {
+    setPendingImageAnalysis(null);
+  };
+
+  if (!isAuthReady) {
+    return (
+      <div className="min-h-screen bg-[#E4E3E0] flex items-center justify-center font-sans">
+        <div className="animate-pulse flex flex-col items-center gap-4">
+          <div className="w-12 h-12 border-4 border-green-700 border-t-transparent rounded-full animate-spin"></div>
+          <p className="text-sm font-mono opacity-50">Đang tải hệ thống...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-green-900 flex items-center justify-center font-sans p-4">
+        <div className="bg-white p-8 rounded-xl shadow-2xl max-w-md w-full text-center">
+          <div className="w-16 h-16 bg-green-100 text-green-700 rounded-full flex items-center justify-center mx-auto mb-6">
+            <Sparkles size={32} />
+          </div>
+          <h1 className="text-3xl font-serif italic font-bold tracking-tight text-gray-900 mb-2">Smart Boarding 4.0</h1>
+          <p className="text-sm uppercase tracking-widest text-gray-500 font-mono mb-8">Giải pháp Số hóa Nề nếp và Học tập</p>
+          
+          <form onSubmit={handleLogin} className="space-y-4">
+            <div>
+              <input 
+                type="password" 
+                value={apiKeyInput}
+                onChange={(e) => setApiKeyInput(e.target.value)}
+                placeholder="Nhập mã API Key..."
+                className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-green-500 font-mono text-center"
+                autoFocus
+              />
+              <p className="text-xs text-gray-400 mt-2">Gợi ý mã thử nghiệm: admin123</p>
+            </div>
+            <button 
+              type="submit"
+              className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-lg transition-colors flex items-center justify-center gap-2"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"></path></svg>
+              Xác nhận
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#E4E3E0] text-[#141414] font-sans selection:bg-[#141414] selection:text-[#E4E3E0] print:bg-white">
@@ -362,6 +583,23 @@ export default function App() {
               Kết quả
             </button>
           </div>
+          
+          <div className="flex items-center gap-3 ml-2 pl-4 border-l border-green-600">
+            <div className="hidden md:block text-right">
+              <p className="text-xs font-bold text-white leading-tight">Giáo viên</p>
+              <p className="text-[10px] text-green-200 font-mono">Đã xác thực</p>
+            </div>
+            <div className="w-8 h-8 rounded-full bg-green-800 border border-green-400 flex items-center justify-center text-xs font-bold">
+              GV
+            </div>
+            <button 
+              onClick={handleLogout}
+              className="text-green-200 hover:text-white transition-colors p-1"
+              title="Đăng xuất"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+            </button>
+          </div>
         </div>
       </header>
 
@@ -393,9 +631,105 @@ export default function App() {
                   className="mt-4 w-full py-3 bg-[#141414] text-[#E4E3E0] font-mono text-xs uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-[#333] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   {isProcessing ? <RefreshCw className="w-4 h-4 animate-spin" /> : <TrendingUp className="w-4 h-4" />}
-                  {isProcessing ? "Đang xử lý..." : "Phân tích & Tự động điền"}
+                  {isProcessing ? "Đang xử lý..." : "AI Gợi ý Dữ liệu"}
                 </button>
               </section>
+
+              {/* AI Suggestion Review Panel */}
+              <AnimatePresence>
+                {pendingAiData && (
+                  <motion.div 
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -20 }}
+                    className="bg-yellow-50 border-2 border-yellow-400 p-6 mb-8 relative"
+                  >
+                    <div className="absolute top-0 right-0 bg-yellow-400 text-yellow-900 text-[10px] font-bold px-2 py-1 uppercase tracking-widest">
+                      AI Gợi ý
+                    </div>
+                    <h3 className="font-serif italic text-lg text-yellow-900 mb-4 flex items-center gap-2">
+                      <Sparkles className="w-5 h-5" />
+                      Vui lòng kiểm tra dữ liệu AI trích xuất
+                    </h3>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6 text-sm font-mono">
+                      <div>
+                        <p className="font-bold text-yellow-800">Điểm Sổ Đầu Bài: <span className="font-normal text-black">{pendingAiData.classLogScore}</span></p>
+                        <p className="font-bold text-yellow-800">Điểm 9, 10: <span className="font-normal text-black">{pendingAiData.goodGradesCount}</span></p>
+                        <p className="font-bold text-yellow-800">Vi phạm T7/CN: <span className="font-normal text-black">{pendingAiData.weekendViolations.saturday ? 'Thứ 7' : ''} {pendingAiData.weekendViolations.sunday ? 'Chủ nhật' : ''} {!pendingAiData.weekendViolations.saturday && !pendingAiData.weekendViolations.sunday ? 'Không' : ''}</span></p>
+                      </div>
+                      <div>
+                        <p className="font-bold text-yellow-800 mb-1">Vi phạm trong tuần:</p>
+                        <ul className="list-disc pl-4 text-black text-xs space-y-1">
+                          {pendingAiData.dailyRecords.map(r => 
+                            r.violations.length > 0 ? (
+                              <li key={r.day}>
+                                <strong>{r.day}:</strong> {r.violations.map(v => `${VIOLATION_LABELS[v.type]} (x${v.count})`).join(', ')}
+                              </li>
+                            ) : null
+                          )}
+                          {pendingAiData.dailyRecords.every(r => r.violations.length === 0) && (
+                            <li className="italic opacity-50">Không có vi phạm nào được tìm thấy.</li>
+                          )}
+                        </ul>
+                      </div>
+                    </div>
+
+                    <div className="flex gap-3">
+                      <button 
+                        onClick={confirmAiData}
+                        className="flex-1 bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 transition-colors flex items-center justify-center gap-2 text-sm"
+                      >
+                        <CheckCircle2 className="w-4 h-4" />
+                        Xác nhận & Áp dụng
+                      </button>
+                      <button 
+                        onClick={cancelAiData}
+                        className="flex-1 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 font-bold py-2 px-4 transition-colors text-sm"
+                      >
+                        Hủy bỏ
+                      </button>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {/* Image Analysis Suggestion Panel */}
+              <AnimatePresence>
+                {pendingImageAnalysis && (
+                  <motion.div 
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -20 }}
+                    className="bg-blue-50 border-2 border-blue-400 p-6 mb-8 relative"
+                  >
+                    <div className="absolute top-0 right-0 bg-blue-400 text-blue-900 text-[10px] font-bold px-2 py-1 uppercase tracking-widest">
+                      AI Phân tích ảnh
+                    </div>
+                    <h3 className="font-serif italic text-lg text-blue-900 mb-2 flex items-center gap-2">
+                      <Camera className="w-5 h-5" />
+                      Kết quả nhận diện ({data.dailyRecords[pendingImageAnalysis.dayIndex].day})
+                    </h3>
+                    <div className="bg-white p-4 border border-blue-200 text-sm mb-4">
+                      <div className="prose prose-sm max-w-none prose-blue">
+                        <ReactMarkdown>
+                          {pendingImageAnalysis.text}
+                        </ReactMarkdown>
+                      </div>
+                    </div>
+                    <p className="text-xs text-blue-700 mb-4 italic">
+                      * Hãy đọc kết quả trên và tự thêm lỗi vi phạm tương ứng vào danh sách bên dưới nếu bạn đồng ý.
+                    </p>
+                    <button 
+                      onClick={confirmImageAnalysis}
+                      className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 transition-colors flex items-center justify-center gap-2 text-sm"
+                    >
+                      <CheckCircle2 className="w-4 h-4" />
+                      Đã hiểu & Đóng
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                 {/* Manual Input - Daily Records */}
@@ -448,16 +782,38 @@ export default function App() {
                             </button>
                           </div>
                         ))}
-                        <button 
-                          onClick={() => addViolation(dIdx)}
-                          className="w-full py-2 border border-dashed border-[#141414] text-[10px] uppercase font-mono flex items-center justify-center gap-1 hover:bg-gray-50 transition-colors"
-                        >
-                          <Plus className="w-3 h-3" /> Thêm lỗi
-                        </button>
+                        <div className="flex gap-2">
+                          <button 
+                            onClick={() => addViolation(dIdx)}
+                            className="flex-1 py-2 border border-dashed border-[#141414] text-[10px] uppercase font-mono flex items-center justify-center gap-1 hover:bg-gray-50 transition-colors"
+                          >
+                            <Plus className="w-3 h-3" /> Thêm lỗi
+                          </button>
+                          <button 
+                            onClick={() => {
+                              setAnalyzingImageDay(dIdx);
+                              fileInputRef.current?.click();
+                            }}
+                            disabled={analyzingImageDay === dIdx}
+                            className="flex-1 py-2 border border-dashed border-green-700 text-green-700 text-[10px] uppercase font-mono flex items-center justify-center gap-1 hover:bg-green-50 transition-colors disabled:opacity-50"
+                          >
+                            {analyzingImageDay === dIdx ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Camera className="w-3 h-3" />} 
+                            {analyzingImageDay === dIdx ? "Đang phân tích..." : "Phân tích ảnh"}
+                          </button>
+                        </div>
                       </div>
                     </div>
                   ))}
                 </div>
+
+                {/* Hidden File Input for Image Analysis */}
+                <input 
+                  type="file" 
+                  accept="image/*" 
+                  ref={fileInputRef} 
+                  onChange={handleImageUpload} 
+                  className="hidden" 
+                />
 
                 {/* Sidebar Inputs */}
                 <div className="space-y-6">
@@ -527,6 +883,8 @@ export default function App() {
           ) : (
             <motion.div 
               key="result"
+              id="report-content"
+              ref={contentRef}
               initial={{ opacity: 0, scale: 0.98 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.98 }}
@@ -703,10 +1061,10 @@ export default function App() {
                   <Download className="w-4 h-4" /> Xuất Markdown
                 </button>
                 <button 
-                  onClick={() => window.print()}
+                  onClick={handlePrint}
                   className="px-6 py-3 bg-white border border-[#141414] font-mono text-xs uppercase tracking-widest hover:bg-gray-50 transition-all flex items-center gap-2"
                 >
-                  <FileText className="w-4 h-4" /> In báo cáo
+                  <FileText className="w-4 h-4" /> In báo cáo (PDF)
                 </button>
                 <button 
                   onClick={() => setActiveTab('input')}
