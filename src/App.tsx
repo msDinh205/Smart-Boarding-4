@@ -149,13 +149,39 @@ export default function App() {
   const [data, setData] = useState<WeeklyData>(getInitialData());
   const [rawInput, setRawInput] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
-  const [activeTab, setActiveTab] = useState<'input' | 'result'>('input');
+  const [activeTab, setActiveTab] = useState<'input' | 'result' | 'ranking'>('input');
   const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
   const [showMarkdown, setShowMarkdown] = useState(false);
   const [analyzingImageDay, setAnalyzingImageDay] = useState<number | null>(null);
   const [pendingAiData, setPendingAiData] = useState<WeeklyData | null>(null);
   const [pendingImageAnalysis, setPendingImageAnalysis] = useState<{ dayIndex: number, text: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const rankingData = useMemo(() => {
+    const scores: { name: ClassName, score: number, level: 'THCS' | 'THPT' }[] = [];
+    
+    CLASSES.forEach(className => {
+      const classData = appData[className];
+      if (classData) {
+        const weeks = Object.keys(classData).map(Number);
+        if (weeks.length > 0) {
+          const latestWeek = Math.max(...weeks);
+          const data = classData[latestWeek];
+          const { S } = calculateResultsForData(data);
+          const level = (className.startsWith('10') || className.startsWith('11') || className.startsWith('12')) ? 'THPT' : 'THCS';
+          scores.push({ name: className, score: S, level });
+        }
+      }
+    });
+
+    const thcs = scores.filter(s => s.level === 'THCS').sort((a, b) => b.score - a.score);
+    const thpt = scores.filter(s => s.level === 'THPT').sort((a, b) => b.score - a.score);
+    
+    const bottomThcs = [...thcs].reverse().slice(0, 3);
+    const bottomThpt = [...thpt].reverse().slice(0, 2);
+    
+    return { thcs, thpt, bottomThcs, bottomThpt };
+  }, [appData]);
 
   const contentRef = useRef<HTMLDivElement>(null);
   const handlePrint = async () => {
@@ -362,7 +388,8 @@ export default function App() {
   const generateAiAnalysis = async (currentData: WeeklyData) => {
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-      const response = await ai.models.generateContent({
+      setAiAnalysis(""); // Reset analysis
+      const responseStream = await ai.models.generateContentStream({
         model: "gemini-3-flash-preview",
         contents: `
           Dựa trên dữ liệu thi đua sau, hãy đưa ra nhận xét ngắn gọn (khoảng 3-4 câu) về ưu điểm và nhược điểm của lớp trong tuần này.
@@ -373,9 +400,13 @@ export default function App() {
           Ngôn ngữ: Tiếng Việt.
         `
       });
-      setAiAnalysis(response.text);
+      
+      for await (const chunk of responseStream) {
+        setAiAnalysis(prev => prev + chunk.text);
+      }
     } catch (e) {
       console.error(e);
+      setAiAnalysis("Không thể tạo nhận xét từ AI.");
     }
   };
 
@@ -600,6 +631,15 @@ export default function App() {
               )}
             >
               Kết quả
+            </button>
+            <button 
+              onClick={() => setActiveTab('ranking')}
+              className={cn(
+                "px-4 py-1.5 text-xs font-mono uppercase tracking-tighter transition-all rounded-sm",
+                activeTab === 'ranking' ? "bg-green-600 text-white font-bold shadow-md" : "text-green-200/70 hover:text-white hover:bg-green-700"
+              )}
+            >
+              Xếp hạng
             </button>
           </div>
           
@@ -906,6 +946,68 @@ export default function App() {
                   >
                     Xem kết quả & Nhận xét
                   </button>
+                </div>
+              </div>
+            </motion.div>
+          ) : activeTab === 'ranking' ? (
+            <motion.div
+              key="ranking"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="space-y-8"
+            >
+              <h2 className="font-serif italic text-2xl mb-6">Bảng xếp hạng</h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div className="bg-white border border-[#141414] p-6 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
+                  <h3 className="font-bold mb-4 font-mono uppercase tracking-widest text-sm">Cấp THCS</h3>
+                  <table className="w-full text-sm font-mono mb-6">
+                    <thead>
+                      <tr className="border-b border-[#141414]">
+                        <th className="text-left py-2">Lớp</th>
+                        <th className="text-right py-2">Điểm</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rankingData.thcs.map((c, i) => (
+                        <tr key={c.name} className="border-b border-dashed border-[#141414]/20">
+                          <td className="py-2">{i + 1}. {c.name}</td>
+                          <td className="text-right py-2">{c.score.toFixed(2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <h4 className="font-bold mb-2 font-mono uppercase tracking-widest text-xs text-red-600">Ba lớp xếp cuối (THCS)</h4>
+                  <ul className="text-sm font-mono list-decimal pl-4">
+                    {rankingData.bottomThcs.map(c => (
+                      <li key={c.name} className="py-1">{c.name} ({c.score.toFixed(2)})</li>
+                    ))}
+                  </ul>
+                </div>
+                <div className="bg-white border border-[#141414] p-6 shadow-[4px_4px_0px_0px_rgba(20,20,20,1)]">
+                  <h3 className="font-bold mb-4 font-mono uppercase tracking-widest text-sm">Cấp THPT</h3>
+                  <table className="w-full text-sm font-mono mb-6">
+                    <thead>
+                      <tr className="border-b border-[#141414]">
+                        <th className="text-left py-2">Lớp</th>
+                        <th className="text-right py-2">Điểm</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rankingData.thpt.map((c, i) => (
+                        <tr key={c.name} className="border-b border-dashed border-[#141414]/20">
+                          <td className="py-2">{i + 1}. {c.name}</td>
+                          <td className="text-right py-2">{c.score.toFixed(2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <h4 className="font-bold mb-2 font-mono uppercase tracking-widest text-xs text-red-600">Hai lớp xếp cuối (THPT)</h4>
+                  <ul className="text-sm font-mono list-decimal pl-4">
+                    {rankingData.bottomThpt.map(c => (
+                      <li key={c.name} className="py-1">{c.name} ({c.score.toFixed(2)})</li>
+                    ))}
+                  </ul>
                 </div>
               </div>
             </motion.div>
