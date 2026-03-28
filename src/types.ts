@@ -5,6 +5,7 @@ export interface DailyRecord {
   day: string;
   violations: Violation[];
   baseScore: number;
+  studentCount: number;
 }
 
 export interface Violation {
@@ -22,6 +23,7 @@ export interface WeeklyData {
   goodGradesCount: number;
   classLogScore: number;
   roomCount: number;
+  studentCount: number;
 }
 
 export const VIOLATION_POINTS: Record<Violation['type'], number> = {

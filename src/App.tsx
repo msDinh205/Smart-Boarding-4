@@ -41,11 +41,12 @@ import {
 const DAYS = ['Thứ 6', 'Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5'];
 
 const getInitialData = (): WeeklyData => ({
-  dailyRecords: DAYS.map(day => ({ day, violations: [], baseScore: 10 })),
+  dailyRecords: DAYS.map(day => ({ day, violations: [], baseScore: 10, studentCount: 0 })),
   weekendViolations: { saturday: false, sunday: false },
   goodGradesCount: 0,
   classLogScore: 10,
   roomCount: 1,
+  studentCount: 0,
 });
 
 const calculateResultsForData = (data: WeeklyData) => {
@@ -367,6 +368,8 @@ export default function App() {
           Dựa trên dữ liệu thi đua sau, hãy đưa ra nhận xét ngắn gọn (khoảng 3-4 câu) về ưu điểm và nhược điểm của lớp trong tuần này.
           Dữ liệu: ${JSON.stringify(currentData)}
           Kết quả tính toán: N=${calculateResults.N}, T=${calculateResults.T}, S=${calculateResults.S}
+          Sĩ số lớp: ${currentData.studentCount}
+          Hãy đưa ra lời khuyên tư vấn tâm lý phù hợp cho những học sinh vi phạm dựa trên các lỗi vi phạm của lớp.
           Ngôn ngữ: Tiếng Việt.
         `
       });
@@ -395,6 +398,12 @@ export default function App() {
   const updateViolation = (dayIndex: number, vIndex: number, field: keyof Violation, value: any) => {
     const newData = { ...data };
     (newData.dailyRecords[dayIndex].violations[vIndex] as any)[field] = value;
+    setData(newData);
+  };
+
+  const updateDailyRecord = (dayIndex: number, field: keyof DailyRecord, value: any) => {
+    const newData = { ...data };
+    (newData.dailyRecords[dayIndex] as any)[field] = value;
     setData(newData);
   };
 
@@ -558,6 +567,16 @@ export default function App() {
                 min="1" 
                 value={data.roomCount || 1}
                 onChange={(e) => setData({...data, roomCount: Math.max(1, parseInt(e.target.value) || 1)})}
+                className="w-12 text-sm font-mono bg-transparent text-white focus:outline-none text-center"
+              />
+            </div>
+            <div className="flex items-center gap-2 border border-green-600 bg-green-800 px-3 py-2 transition-colors focus-within:border-green-400 rounded-sm" title="Sĩ số học sinh">
+              <span className="text-sm font-mono text-green-200/70">Sĩ số:</span>
+              <input 
+                type="number" 
+                min="0" 
+                value={data.studentCount || 0}
+                onChange={(e) => setData({...data, studentCount: parseInt(e.target.value) || 0})}
                 className="w-12 text-sm font-mono bg-transparent text-white focus:outline-none text-center"
               />
             </div>
@@ -744,6 +763,16 @@ export default function App() {
                       <div className="bg-[#141414] text-[#E4E3E0] px-4 py-2 flex justify-between items-center">
                         <span className="font-mono text-xs uppercase tracking-widest">{record.day}</span>
                         <span className="font-mono text-[10px] opacity-70">Điểm gốc: {record.baseScore}</span>
+                        <div className="flex items-center gap-2">
+                           <span className="font-mono text-[10px] opacity-70">Sĩ số:</span>
+                           <input 
+                             type="number"
+                             min="0"
+                             value={record.studentCount || 0}
+                             onChange={(e) => updateDailyRecord(dIdx, 'studentCount', parseInt(e.target.value) || 0)}
+                             className="w-8 text-[10px] bg-transparent text-white border-b border-white/20 focus:outline-none text-center"
+                           />
+                        </div>
                       </div>
                       <div className="p-4 space-y-3">
                         {record.violations.length === 0 && (
